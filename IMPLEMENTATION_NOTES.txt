@@ -1,0 +1,29 @@
+Recall project update notes
+
+Updated Kotlin files:
+- app/src/main/java/com/recall/app/RecallAiSearch.kt
+- app/src/main/java/com/recall/app/LibraryScreen.kt
+- app/src/main/java/com/recall/app/MainActivity.kt
+
+Implemented:
+1. AI Search Manage Memories now displays a two-column image gallery with titles, categories, and AI descriptions.
+2. Memories are selected by tapping their cards; selected cards receive a purple border and check indicator. No per-image checkbox list is shown.
+3. After selection, the user can remove memories from AI Search or permanently delete them. The permanent-delete action appears only after selecting memories.
+4. Remove from AI Search stores a persistent exclusion list. Original images remain in Recall Library, and excluded memories can be restored.
+5. Permanently Delete removes selected PNGs, Recall metadata, AI index entries, and exclusion entries.
+6. Library now has a selection mode with Select All and bulk permanent deletion, including AI index cleanup.
+7. Library edits update the AI Search metadata index; Library deletes also remove the AI index entry.
+8. Library thumbnails/details use sampled bitmap decoding to reduce memory use.
+9. Search and Settings now receive the same Scaffold content insets as the other tabs, so their headings no longer sit behind the top system area.
+10. Home no longer shows the "Search your memories..." field. Selecting a category displays saved images from that category.
+11. After saving or cancelling the screenshot crop/details flow, Recall moves its task to the background so the previous app can return to the foreground.
+
+Preserved:
+- Existing Firebase/Gemini model configuration and request limits.
+- ML Kit OCR and image labels.
+- Existing fuzzy/synonym/date/time search engine.
+- Floating Recall service, gesture service/settings, launcher icon resources, and capture/crop implementation.
+
+Important:
+- Database/cloud work was not added.
+- The project was not compiled in this environment because the Gradle wrapper distribution (Gradle 9.6.0) could not be downloaded; network access to services.gradle.org was unavailable. Open this project in Android Studio, allow Gradle sync, then run Build > Make Project. If Android Studio reports an error, send the first red error and I can correct it.

@@ -1,0 +1,33 @@
+# Android Studio
+*.iml
+.idea/
+.gradle/
+
+# Local configuration
+/local.properties
+local.properties
+.env
+
+# Build files
+/build/
+/app/build/
+**/build/
+
+# Native build files
+.externalNativeBuild/
+.cxx/
+
+# Captures
+/captures/
+
+# macOS
+.DS_Store
+
+# Signing keys
+*.jks
+*.keystore
+
+# Temporary files
+*.tmp
+*.loggit status
+app/google-services.json
