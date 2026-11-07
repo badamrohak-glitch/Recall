@@ -1710,29 +1710,20 @@ fun RecallHomeScreen(initialTab: String = "Home") {
 
         if (showOnboarding) {
 
-            RecallOnboardingScreen(
-                modifier = Modifier.padding(padding),
+            Box(
+                modifier = Modifier.padding(padding)
+            ) {
+                RecallHelpScreen(
+                    onBack = {
 
-                onEnableGesture = {
+                        onboardingPreferences.edit()
+                            .putBoolean("instructions_shown", true)
+                            .apply()
 
-                    onboardingPreferences.edit()
-                        .putBoolean("instructions_shown", true)
-                        .apply()
-
-                    showOnboarding = false
-
-                    requestGestureEnable()
-                },
-
-                onSkip = {
-
-                    onboardingPreferences.edit()
-                        .putBoolean("instructions_shown", true)
-                        .apply()
-
-                    showOnboarding = false
-                }
-            )
+                        showOnboarding = false
+                    }
+                )
+            }
 
         } else {
 
