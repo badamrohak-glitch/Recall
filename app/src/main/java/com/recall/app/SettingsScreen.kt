@@ -1,27 +1,32 @@
 package com.recall.app
 
 import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.ClearTokenRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.Scope
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -82,11 +87,7 @@ private suspend fun fetchDriveAccountEmail(
         val email = userInfo.optString("email", "")
         val verified = userInfo.optBoolean("email_verified", false)
 
-        if (email.isBlank()) {
-            throw Exception("Google did not return an email address.")
-        }
-
-        if (!verified) {
+        if (email.isBlank() || !verified) {
             throw Exception("Google account email could not be verified.")
         }
 
@@ -125,19 +126,21 @@ fun SettingsScreen(
         mutableStateOf(auth.currentUser)
     }
 
-    var signingIn by remember {
+    var signingIn by remember { mutableStateOf(false) }
+    var accountMessage by remember { mutableStateOf("") }
+    var showSignOutConfirmation by remember { mutableStateOf(false) }
+
+    // HELP PAGE
+
+    var showHelp by remember {
         mutableStateOf(false)
     }
 
-    var accountMessage by remember {
-        mutableStateOf("")
+    BackHandler(enabled = showHelp) {
+        showHelp = false
     }
 
-    var showSignOutConfirmation by remember {
-        mutableStateOf(false)
-    }
-
-    // Google Drive state
+    // GOOGLE DRIVE STATE
 
     var driveAccessToken by remember {
         mutableStateOf<String?>(null)
@@ -147,59 +150,50 @@ fun SettingsScreen(
         mutableStateOf<String?>(null)
     }
 
-    var connectingDrive by remember {
-        mutableStateOf(false)
-    }
+    var connectingDrive by remember { mutableStateOf(false) }
+    var disconnectingDrive by remember { mutableStateOf(false) }
+    var driveMessage by remember { mutableStateOf("") }
+    var showDriveDisconnectConfirmation by remember { mutableStateOf(false) }
 
-    var disconnectingDrive by remember {
-        mutableStateOf(false)
-    }
-
-    var driveMessage by remember {
-        mutableStateOf("")
-    }
-
-    var showDriveDisconnectConfirmation by remember {
-        mutableStateOf(false)
-    }
-
-    // Google Photos state
+    // GOOGLE PHOTOS STATE
 
     var photosAccessToken by remember {
         mutableStateOf(RecallPhotosSession.accessToken)
     }
 
     var photosAccountEmail by remember {
-        mutableStateOf(RecallPhotosSession.accountEmail)
+        mutableStateOf(
+            RecallPhotosSession.accountEmail
+                ?: RecallPhotosAuthorization.getConnectedAccountEmail(context)
+        )
     }
 
-    var connectingPhotos by remember {
-        mutableStateOf(false)
-    }
-
-    var disconnectingPhotos by remember {
-        mutableStateOf(false)
-    }
+    var connectingPhotos by remember { mutableStateOf(false) }
+    var disconnectingPhotos by remember { mutableStateOf(false) }
 
     var photosMessage by remember {
         mutableStateOf(
-            if (photosAccessToken != null) {
-                "Google Photos connected."
+            if (photosAccountEmail != null) {
+                "Checking Google Photos connection..."
             } else {
                 "Connect Google Photos to upload your captures."
             }
         )
     }
 
-    var showPhotosDisconnectConfirmation by remember {
-        mutableStateOf(false)
+    var showPhotosDisconnectConfirmation by remember { mutableStateOf(false) }
+
+    // CLOUD BACKUP PREFERENCES
+
+    var driveBackupEnabled by remember {
+        mutableStateOf(
+            RecallBackupPreferences.isDriveBackupEnabled(context)
+        )
     }
 
-    // Cloud Backup preferences
-
-    var backupDestination by remember {
+    var photosBackupEnabled by remember {
         mutableStateOf(
-            RecallBackupPreferences.getDestination(context)
+            RecallBackupPreferences.isPhotosBackupEnabled(context)
         )
     }
 
@@ -215,7 +209,7 @@ fun SettingsScreen(
         )
     }
 
-    // Firebase account listener
+    // FIREBASE ACCOUNT LISTENER
 
     DisposableEffect(auth) {
 
@@ -230,14 +224,11 @@ fun SettingsScreen(
         }
     }
 
-    // ------------------------------------------------
     // GOOGLE DRIVE TOKEN PROCESSING
-    // ------------------------------------------------
 
     fun processDriveToken(token: String?) {
 
         if (token.isNullOrBlank()) {
-
             connectingDrive = false
             RecallDriveSession.disconnect()
 
@@ -268,9 +259,7 @@ fun SettingsScreen(
                     )
 
                 if (folderId.isBlank()) {
-                    throw Exception(
-                        "Recall folder could not be created."
-                    )
+                    throw Exception("Recall folder could not be created.")
                 }
 
                 RecallDriveSession.connect(
@@ -291,15 +280,12 @@ fun SettingsScreen(
                         ?: "Unable to prepare the Recall folder."
 
             } finally {
-
                 connectingDrive = false
             }
         }
     }
 
-    // ------------------------------------------------
     // GOOGLE PHOTOS TOKEN PROCESSING
-    // ------------------------------------------------
 
     fun processPhotosToken(token: String?) {
 
@@ -314,10 +300,15 @@ fun SettingsScreen(
         photosMessage = "Checking your Google account..."
 
         scope.launch {
+
             try {
-                // The Photos authorization now includes the OpenID email scopes.
-                // Use the returned token to retrieve the verified account email.
+
                 val email = fetchDriveAccountEmail(token)
+
+                RecallPhotosAuthorization.saveConnectedAccountEmail(
+                    context,
+                    email
+                )
 
                 RecallPhotosSession.connect(
                     token = token,
@@ -326,12 +317,19 @@ fun SettingsScreen(
 
                 photosAccessToken = token
                 photosAccountEmail = email
-                photosMessage = "Google Photos connected successfully!"
+
+                photosMessage =
+                    "Google Photos connected successfully!"
+
+                RecallBackupScheduler.schedule(context)
 
             } catch (e: Exception) {
+
                 RecallPhotosSession.disconnect()
+
                 photosAccessToken = null
                 photosAccountEmail = null
+
                 photosMessage = e.localizedMessage
                     ?: "Unable to retrieve your Google account details."
 
@@ -341,9 +339,7 @@ fun SettingsScreen(
         }
     }
 
-    // ------------------------------------------------
     // GOOGLE DRIVE AUTHORIZATION RESULT
-    // ------------------------------------------------
 
     val driveAuthorizationLauncher =
         rememberLauncherForActivityResult(
@@ -359,7 +355,6 @@ fun SettingsScreen(
                     if (returnedIntent == null) {
 
                         connectingDrive = false
-
                         driveMessage =
                             "Google Drive authorization was not completed."
 
@@ -367,9 +362,7 @@ fun SettingsScreen(
 
                         val authorizationResult =
                             Identity.getAuthorizationClient(context)
-                                .getAuthorizationResultFromIntent(
-                                    returnedIntent
-                                )
+                                .getAuthorizationResultFromIntent(returnedIntent)
 
                         processDriveToken(
                             authorizationResult.accessToken
@@ -379,7 +372,6 @@ fun SettingsScreen(
                 } catch (e: Exception) {
 
                     connectingDrive = false
-
                     driveMessage =
                         e.localizedMessage
                             ?: "Google Drive authorization failed."
@@ -388,15 +380,11 @@ fun SettingsScreen(
             } else {
 
                 connectingDrive = false
-
-                driveMessage =
-                    "Google Drive connection was cancelled."
+                driveMessage = "Google Drive connection was cancelled."
             }
         }
 
-    // ------------------------------------------------
     // GOOGLE PHOTOS AUTHORIZATION RESULT
-    // ------------------------------------------------
 
     val photosAuthorizationLauncher =
         rememberLauncherForActivityResult(
@@ -412,7 +400,6 @@ fun SettingsScreen(
                     if (returnedIntent == null) {
 
                         connectingPhotos = false
-
                         photosMessage =
                             "Google Photos authorization was not completed."
 
@@ -420,9 +407,7 @@ fun SettingsScreen(
 
                         val authorizationResult =
                             Identity.getAuthorizationClient(context)
-                                .getAuthorizationResultFromIntent(
-                                    returnedIntent
-                                )
+                                .getAuthorizationResultFromIntent(returnedIntent)
 
                         processPhotosToken(
                             authorizationResult.accessToken
@@ -432,7 +417,6 @@ fun SettingsScreen(
                 } catch (e: Exception) {
 
                     connectingPhotos = false
-
                     photosMessage =
                         e.localizedMessage
                             ?: "Google Photos authorization failed."
@@ -441,23 +425,16 @@ fun SettingsScreen(
             } else {
 
                 connectingPhotos = false
-
-                photosMessage =
-                    "Google Photos connection was cancelled."
+                photosMessage = "Google Photos connection was cancelled."
             }
         }
 
-    // ------------------------------------------------
     // CONNECT GOOGLE DRIVE
-    // ------------------------------------------------
 
     fun connectGoogleDrive() {
 
         if (activity == null) {
-
-            driveMessage =
-                "Unable to open Google Drive authorization."
-
+            driveMessage = "Unable to open Google Drive authorization."
             return
         }
 
@@ -475,8 +452,7 @@ fun SettingsScreen(
 
                 if (authorizationResult.hasResolution()) {
 
-                    val pendingIntent =
-                        authorizationResult.pendingIntent
+                    val pendingIntent = authorizationResult.pendingIntent
 
                     if (pendingIntent != null) {
 
@@ -487,14 +463,11 @@ fun SettingsScreen(
                                     pendingIntent.intentSender
                                 ).build()
 
-                            driveAuthorizationLauncher.launch(
-                                intentRequest
-                            )
+                            driveAuthorizationLauncher.launch(intentRequest)
 
                         } catch (e: Exception) {
 
                             connectingDrive = false
-
                             driveMessage =
                                 e.localizedMessage
                                     ?: "Unable to open Google permission screen."
@@ -503,39 +476,30 @@ fun SettingsScreen(
                     } else {
 
                         connectingDrive = false
-
                         driveMessage =
                             "Google authorization request was incomplete."
                     }
 
                 } else {
 
-                    processDriveToken(
-                        authorizationResult.accessToken
-                    )
+                    processDriveToken(authorizationResult.accessToken)
                 }
             }
             .addOnFailureListener { error ->
 
                 connectingDrive = false
-
                 driveMessage =
                     error.localizedMessage
                         ?: "Google Drive connection failed."
             }
     }
 
-    // ------------------------------------------------
     // CONNECT GOOGLE PHOTOS
-    // ------------------------------------------------
 
     fun connectGooglePhotos() {
 
         if (activity == null) {
-
-            photosMessage =
-                "Unable to open Google Photos authorization."
-
+            photosMessage = "Unable to open Google Photos authorization."
             return
         }
 
@@ -553,8 +517,7 @@ fun SettingsScreen(
 
                 if (authorizationResult.hasResolution()) {
 
-                    val pendingIntent =
-                        authorizationResult.pendingIntent
+                    val pendingIntent = authorizationResult.pendingIntent
 
                     if (pendingIntent != null) {
 
@@ -565,14 +528,11 @@ fun SettingsScreen(
                                     pendingIntent.intentSender
                                 ).build()
 
-                            photosAuthorizationLauncher.launch(
-                                intentRequest
-                            )
+                            photosAuthorizationLauncher.launch(intentRequest)
 
                         } catch (e: Exception) {
 
                             connectingPhotos = false
-
                             photosMessage =
                                 e.localizedMessage
                                     ?: "Unable to open Google Photos permission screen."
@@ -581,31 +541,25 @@ fun SettingsScreen(
                     } else {
 
                         connectingPhotos = false
-
                         photosMessage =
                             "Google authorization request was incomplete."
                     }
 
                 } else {
 
-                    processPhotosToken(
-                        authorizationResult.accessToken
-                    )
+                    processPhotosToken(authorizationResult.accessToken)
                 }
             }
             .addOnFailureListener { error ->
 
                 connectingPhotos = false
-
                 photosMessage =
                     error.localizedMessage
                         ?: "Google Photos connection failed."
             }
     }
 
-    // ------------------------------------------------
     // DISCONNECT GOOGLE DRIVE
-    // ------------------------------------------------
 
     fun disconnectGoogleDrive() {
 
@@ -617,14 +571,11 @@ fun SettingsScreen(
             driveAccountEmail = null
 
             RecallDriveSession.disconnect()
-
             driveStorage.clearConnectedAccountEmail()
 
-            RecallBackupScheduler.cancel(context)
+            RecallBackupScheduler.schedule(context)
 
-            driveMessage =
-                "Google Drive is already disconnected."
-
+            driveMessage = "Google Drive is already disconnected."
             return
         }
 
@@ -640,14 +591,13 @@ fun SettingsScreen(
             .addOnSuccessListener {
 
                 RecallDriveSession.disconnect()
-
                 driveStorage.clearConnectedAccountEmail()
 
                 driveAccessToken = null
                 driveAccountEmail = null
                 disconnectingDrive = false
 
-                RecallBackupScheduler.cancel(context)
+                RecallBackupScheduler.schedule(context)
 
                 driveMessage =
                     "Google Drive disconnected successfully."
@@ -655,16 +605,13 @@ fun SettingsScreen(
             .addOnFailureListener { error ->
 
                 disconnectingDrive = false
-
                 driveMessage =
                     error.localizedMessage
                         ?: "Unable to disconnect Google Drive."
             }
     }
 
-    // ------------------------------------------------
     // DISCONNECT GOOGLE PHOTOS
-    // ------------------------------------------------
 
     fun disconnectGooglePhotos() {
 
@@ -674,12 +621,14 @@ fun SettingsScreen(
 
             RecallPhotosSession.disconnect()
 
+            RecallPhotosAuthorization.clearConnectedAccountEmail(context)
+
             photosAccessToken = null
             photosAccountEmail = null
 
-            photosMessage =
-                "Google Photos is already disconnected."
+            RecallBackupScheduler.schedule(context)
 
+            photosMessage = "Google Photos disconnected."
             return
         }
 
@@ -696,9 +645,13 @@ fun SettingsScreen(
 
                 RecallPhotosSession.disconnect()
 
+                RecallPhotosAuthorization.clearConnectedAccountEmail(context)
+
                 photosAccessToken = null
                 photosAccountEmail = null
                 disconnectingPhotos = false
+
+                RecallBackupScheduler.schedule(context)
 
                 photosMessage =
                     "Google Photos disconnected successfully."
@@ -706,23 +659,21 @@ fun SettingsScreen(
             .addOnFailureListener { error ->
 
                 disconnectingPhotos = false
-
                 photosMessage =
                     error.localizedMessage
                         ?: "Unable to disconnect Google Photos."
             }
     }
 
-    // ------------------------------------------------
-    // RESTORE EXISTING DRIVE AUTHORIZATION
-    // ------------------------------------------------
+    // RESTORE EXISTING AUTHORIZATION
 
     LaunchedEffect(Unit) {
 
+        // Restore Google Drive authorization.
+
         if (activity != null && driveAccessToken == null) {
 
-            driveMessage =
-                "Checking Google Drive connection..."
+            driveMessage = "Checking Google Drive connection..."
 
             val request = AuthorizationRequest.builder()
                 .setRequestedScopes(DriveScopes)
@@ -733,11 +684,8 @@ fun SettingsScreen(
                 .addOnSuccessListener { result ->
 
                     if (!result.hasResolution()) {
-
                         processDriveToken(result.accessToken)
-
                     } else {
-
                         driveMessage =
                             "Connect Google Drive to restore access."
                     }
@@ -749,11 +697,48 @@ fun SettingsScreen(
                             ?: "Unable to restore Google Drive connection."
                 }
         }
+
+        // Restore Google Photos authorization.
+
+        val savedPhotosEmail =
+            RecallPhotosAuthorization.getConnectedAccountEmail(context)
+
+        if (
+            activity != null &&
+            savedPhotosEmail != null &&
+            photosAccessToken == null
+        ) {
+
+            photosMessage = "Restoring Google Photos connection..."
+
+            val request = AuthorizationRequest.builder()
+                .setRequestedScopes(PhotosScopes)
+                .build()
+
+            Identity.getAuthorizationClient(activity)
+                .authorize(request)
+                .addOnSuccessListener { result ->
+
+                    if (!result.hasResolution()) {
+
+                        processPhotosToken(result.accessToken)
+
+                    } else {
+
+                        photosMessage =
+                            "Google Photos needs you to reconnect. Tap Connect Google Photos."
+                    }
+                }
+                .addOnFailureListener { error ->
+
+                    photosMessage =
+                        error.localizedMessage
+                            ?: "Unable to restore Google Photos connection. Please reconnect."
+                }
+        }
     }
 
-    // ------------------------------------------------
     // SETTINGS UI
-    // ------------------------------------------------
 
     MaterialTheme(
         colorScheme = darkColorScheme(
@@ -765,651 +750,736 @@ fun SettingsScreen(
         )
     ) {
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 18.dp)
-                .verticalScroll(rememberScrollState()),
+        if (showHelp) {
 
-            verticalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-
-            Text(
-                "Settings",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = SettingsText
+            RecallHelpScreen(
+                onBack = {
+                    showHelp = false
+                }
             )
 
-            // TRIPLE-TAP DETECTION
+        } else {
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = SettingsCard
-                ),
-                shape = MaterialTheme.shapes.large
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(SettingsBackground)
+                    .padding(horizontal = 20.dp, vertical = 18.dp)
+                    .verticalScroll(rememberScrollState()),
+
+                verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
 
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+                Text(
+                    "Settings",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = SettingsText
+                )
 
-                    Text(
-                        "Triple-Tap Detection",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = SettingsText
-                    )
+                // HELP & INSTRUCTIONS
 
-                    Text(
-                        "Enable or disable the triple-tap gesture for quick capture.",
-                        color = SettingsMuted,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-
-                        Text(
-                            if (tripleTapEnabled) "ON" else "OFF",
-                            color = if (tripleTapEnabled) {
-                                SettingsPurple
-                            } else {
-                                SettingsMuted
-                            },
-                            fontWeight = FontWeight.SemiBold
-                        )
-
-                        Switch(
-                            checked = tripleTapEnabled,
-                            onCheckedChange = onTripleTapChanged
-                        )
-                    }
-                }
-            }
-
-            // TRIPLE-TAP SENSITIVITY
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = SettingsCard
-                ),
-                shape = MaterialTheme.shapes.large
-            ) {
-
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-
-                    Text(
-                        "Triple-Tap Sensitivity",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = SettingsText
-                    )
-
-                    Text(
-                        "Adjust how easily Recall detects the triple-tap gesture.",
-                        color = SettingsMuted,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-
-                    Text(
-                        "${sensitivity.toInt()}%",
-                        color = SettingsPurple,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Slider(
-                        value = sensitivity.coerceIn(0f, 100f),
-                        onValueChange = onSensitivityChanged,
-                        valueRange = 0f..100f,
-                        enabled = tripleTapEnabled,
-                        colors = SliderDefaults.colors(
-                            thumbColor = SettingsPurple,
-                            activeTrackColor = SettingsPurple,
-                            inactiveTrackColor = Color(0xFF494354)
-                        )
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-
-                        Text("Firm", color = SettingsMuted)
-                        Text("Very Sensitive", color = SettingsMuted)
-                    }
-                }
-            }
-
-            // RECALL ACCOUNT
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = SettingsCard
-                ),
-                shape = MaterialTheme.shapes.large
-            ) {
-
-                Column(
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                        .clickable {
+                            showHelp = true
+                        },
+                    colors = CardDefaults.cardColors(
+                        containerColor = SettingsCard
+                    ),
+                    shape = MaterialTheme.shapes.large
                 ) {
 
-                    Text(
-                        "Recall Account",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = SettingsText
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
 
-                    Text(
-                        "Sign in to sync your saved memory details across devices.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = SettingsMuted
-                    )
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
 
-                    if (currentUser != null) {
-
-                        Text(
-                            "SIGNED IN",
-                            color = SettingsPurple,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Text(
-                            text = currentUser?.email
-                                ?: currentUser?.displayName
-                                ?: "Google account",
-                            modifier = Modifier.fillMaxWidth(),
-                            color = SettingsText,
-                            style = MaterialTheme.typography.bodyLarge,
-                            softWrap = true
-                        )
-
-                        OutlinedButton(
-                            onClick = {
-                                showSignOutConfirmation = true
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Sign Out")
-                        }
-
-                    } else {
-
-                        Button(
-                            onClick = {
-
-                                if (activity == null) {
-
-                                    accountMessage =
-                                        "Unable to open Google sign-in."
-
-                                } else {
-
-                                    scope.launch {
-
-                                        signingIn = true
-                                        accountMessage = ""
-
-                                        try {
-
-                                            googleAuth.signIn(activity)
-
-                                            accountMessage =
-                                                "Google sign-in successful."
-
-                                        } catch (e: Exception) {
-
-                                            accountMessage =
-                                                e.localizedMessage
-                                                    ?: "Sign-in failed. Please try again."
-
-                                        } finally {
-
-                                            signingIn = false
-                                        }
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !signingIn
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
 
                             Text(
-                                if (signingIn) {
-                                    "Opening Google accounts..."
-                                } else {
-                                    "Choose Google Account"
-                                }
+                                "Help & Instructions",
+                                color = SettingsText,
+                                fontWeight = FontWeight.SemiBold,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+
+                            Text(
+                                "Learn how Recall works and how to back up memories.",
+                                color = SettingsMuted,
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
 
                         Text(
-                            "You can choose an existing account or add another Google account.",
+                            "›",
+                            color = SettingsPurple,
+                            fontSize = 26.sp
+                        )
+                    }
+                }
+
+                // TRIPLE-TAP DETECTION
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SettingsCard),
+                    shape = MaterialTheme.shapes.large
+                ) {
+
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+
+                        Text(
+                            "Triple-Tap Detection",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SettingsText
+                        )
+
+                        Text(
+                            "Enable or disable the triple-tap gesture for quick capture.",
+                            color = SettingsMuted,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+
+                            Text(
+                                if (tripleTapEnabled) "ON" else "OFF",
+                                color = if (tripleTapEnabled) SettingsPurple else SettingsMuted,
+                                fontWeight = FontWeight.SemiBold
+                            )
+
+                            Switch(
+                                checked = tripleTapEnabled,
+                                onCheckedChange = onTripleTapChanged
+                            )
+                        }
+                    }
+                }
+
+                // TRIPLE-TAP SENSITIVITY
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SettingsCard),
+                    shape = MaterialTheme.shapes.large
+                ) {
+
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+
+                        Text(
+                            "Triple-Tap Sensitivity",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SettingsText
+                        )
+
+                        Text(
+                            "Adjust how easily Recall detects the triple-tap gesture.",
+                            color = SettingsMuted,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        Text(
+                            "${sensitivity.toInt()}%",
+                            color = SettingsPurple,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Slider(
+                            value = sensitivity.coerceIn(0f, 100f),
+                            onValueChange = onSensitivityChanged,
+                            valueRange = 0f..100f,
+                            enabled = tripleTapEnabled,
+                            colors = SliderDefaults.colors(
+                                thumbColor = SettingsPurple,
+                                activeTrackColor = SettingsPurple,
+                                inactiveTrackColor = Color(0xFF494354)
+                            )
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Firm", color = SettingsMuted)
+                            Text("Very Sensitive", color = SettingsMuted)
+                        }
+                    }
+                }
+
+                // RECALL ACCOUNT
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SettingsCard),
+                    shape = MaterialTheme.shapes.large
+                ) {
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+
+                        Text(
+                            "Recall Account",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SettingsText
+                        )
+
+                        Text(
+                            "Sign in to sync your saved memory details across devices.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SettingsMuted
+                        )
+
+                        if (currentUser != null) {
+
+                            Text(
+                                "SIGNED IN",
+                                color = SettingsPurple,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Text(
+                                text = currentUser?.email
+                                    ?: currentUser?.displayName
+                                    ?: "Google account",
+                                modifier = Modifier.fillMaxWidth(),
+                                color = SettingsText,
+                                style = MaterialTheme.typography.bodyLarge,
+                                softWrap = true
+                            )
+
+                            OutlinedButton(
+                                onClick = { showSignOutConfirmation = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Sign Out")
+                            }
+
+                        } else {
+
+                            Button(
+                                onClick = {
+
+                                    if (activity == null) {
+
+                                        accountMessage =
+                                            "Unable to open Google sign-in."
+
+                                    } else {
+
+                                        scope.launch {
+
+                                            signingIn = true
+                                            accountMessage = ""
+
+                                            try {
+
+                                                googleAuth.signIn(activity)
+
+                                                accountMessage =
+                                                    "Google sign-in successful."
+
+                                            } catch (e: Exception) {
+
+                                                accountMessage =
+                                                    e.localizedMessage
+                                                        ?: "Sign-in failed. Please try again."
+
+                                            } finally {
+                                                signingIn = false
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !signingIn
+                            ) {
+
+                                Text(
+                                    if (signingIn) {
+                                        "Opening Google accounts..."
+                                    } else {
+                                        "Choose Google Account"
+                                    }
+                                )
+                            }
+
+                            Text(
+                                "You can choose an existing account or add another Google account.",
+                                color = SettingsMuted,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        if (accountMessage.isNotBlank()) {
+                            Text(
+                                text = accountMessage,
+                                modifier = Modifier.fillMaxWidth(),
+                                color = SettingsPurple,
+                                style = MaterialTheme.typography.bodySmall,
+                                softWrap = true
+                            )
+                        }
+                    }
+                }
+
+                // GOOGLE DRIVE
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SettingsCard),
+                    shape = MaterialTheme.shapes.large
+                ) {
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+
+                        Text(
+                            "Google Drive",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SettingsText
+                        )
+
+                        Text(
+                            "Connect your Google Drive account to let Recall store your memories in your own Drive.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SettingsMuted
+                        )
+
+                        if (driveAccessToken != null) {
+
+                            Text(
+                                "DRIVE CONNECTED",
+                                color = SettingsPurple,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Text(
+                                "Connected Google account:",
+                                color = SettingsMuted,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+
+                            Text(
+                                text = driveAccountEmail
+                                    ?: "Retrieving account email...",
+                                modifier = Modifier.fillMaxWidth(),
+                                color = SettingsText,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                softWrap = true
+                            )
+
+                            OutlinedButton(
+                                onClick = { showDriveDisconnectConfirmation = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !disconnectingDrive
+                            ) {
+                                Text(
+                                    if (disconnectingDrive) {
+                                        "Disconnecting..."
+                                    } else {
+                                        "Disconnect Google Drive"
+                                    }
+                                )
+                            }
+
+                        } else {
+
+                            Text(
+                                "NOT CONNECTED",
+                                color = SettingsMuted,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Button(
+                                onClick = { connectGoogleDrive() },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !connectingDrive && !disconnectingDrive
+                            ) {
+                                Text(
+                                    if (connectingDrive) {
+                                        "Connecting to Google Drive..."
+                                    } else {
+                                        "Connect Google Drive"
+                                    }
+                                )
+                            }
+                        }
+
+                        Text(
+                            "Recall requests access to files it creates or that you explicitly open with the app. Your other Drive files remain outside this permission.",
+                            color = SettingsMuted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+
+                        if (driveMessage.isNotBlank()) {
+                            Text(
+                                text = driveMessage,
+                                modifier = Modifier.fillMaxWidth(),
+                                color = SettingsPurple,
+                                style = MaterialTheme.typography.bodySmall,
+                                softWrap = true
+                            )
+                        }
+                    }
+                }
+
+                // GOOGLE PHOTOS
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SettingsCard),
+                    shape = MaterialTheme.shapes.large
+                ) {
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+
+                        Text(
+                            "Google Photos",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SettingsText
+                        )
+
+                        Text(
+                            "Connect Google Photos to let Recall upload your newly captured images directly to your Photos library.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SettingsMuted
+                        )
+
+                        if (photosAccountEmail != null) {
+
+                            Text(
+                                if (photosAccessToken != null) {
+                                    "PHOTOS CONNECTED"
+                                } else {
+                                    "ACCOUNT SAVED"
+                                },
+                                color = SettingsPurple,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Text(
+                                "Connected Google account:",
+                                color = SettingsMuted,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+
+                            Text(
+                                text = photosAccountEmail
+                                    ?: "Retrieving account email...",
+                                modifier = Modifier.fillMaxWidth(),
+                                color = SettingsText,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                softWrap = true
+                            )
+
+                            OutlinedButton(
+                                onClick = { showPhotosDisconnectConfirmation = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !disconnectingPhotos
+                            ) {
+                                Text(
+                                    if (disconnectingPhotos) {
+                                        "Disconnecting..."
+                                    } else {
+                                        "Disconnect Google Photos"
+                                    }
+                                )
+                            }
+
+                        } else {
+
+                            Text(
+                                "NOT CONNECTED",
+                                color = SettingsMuted,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Button(
+                                onClick = { connectGooglePhotos() },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !connectingPhotos && !disconnectingPhotos
+                            ) {
+                                Text(
+                                    if (connectingPhotos) {
+                                        "Connecting to Google Photos..."
+                                    } else {
+                                        "Connect Google Photos"
+                                    }
+                                )
+                            }
+                        }
+
+                        Text(
+                            "Recall requests permission to add new images to Google Photos. It cannot browse your existing Photos library.",
+                            color = SettingsMuted,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+
+                        if (photosMessage.isNotBlank()) {
+                            Text(
+                                text = photosMessage,
+                                modifier = Modifier.fillMaxWidth(),
+                                color = SettingsPurple,
+                                style = MaterialTheme.typography.bodySmall,
+                                softWrap = true
+                            )
+                        }
+                    }
+                }
+
+                // CLOUD BACKUP
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SettingsCard),
+                    shape = MaterialTheme.shapes.large
+                ) {
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+
+                        Text(
+                            "Cloud Backup",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SettingsText
+                        )
+
+                        Text(
+                            "Choose one or both destinations for your Recall memories.",
+                            color = SettingsMuted,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        // GOOGLE DRIVE BACKUP SWITCH
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+
+                                Text(
+                                    "Google Drive",
+                                    color = SettingsText,
+                                    fontWeight = FontWeight.Medium
+                                )
+
+                                Text(
+                                    if (driveBackupEnabled) {
+                                        "Drive backup enabled"
+                                    } else {
+                                        "Drive backup disabled"
+                                    },
+                                    color = SettingsMuted,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+
+                            Switch(
+                                checked = driveBackupEnabled,
+                                onCheckedChange = { enabled ->
+
+                                    driveBackupEnabled = enabled
+
+                                    RecallBackupPreferences.setDriveBackupEnabled(
+                                        context,
+                                        enabled
+                                    )
+
+                                    RecallBackupScheduler.schedule(context)
+                                }
+                            )
+                        }
+
+                        HorizontalDivider(color = Color(0xFF494354))
+
+                        // GOOGLE PHOTOS BACKUP SWITCH
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+
+                                Text(
+                                    "Google Photos",
+                                    color = SettingsText,
+                                    fontWeight = FontWeight.Medium
+                                )
+
+                                Text(
+                                    if (photosBackupEnabled) {
+                                        "Photos backup enabled"
+                                    } else {
+                                        "Photos backup disabled"
+                                    },
+                                    color = SettingsMuted,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+
+                            Switch(
+                                checked = photosBackupEnabled,
+                                onCheckedChange = { enabled ->
+
+                                    photosBackupEnabled = enabled
+
+                                    RecallBackupPreferences.setPhotosBackupEnabled(
+                                        context,
+                                        enabled
+                                    )
+
+                                    RecallBackupScheduler.schedule(context)
+                                }
+                            )
+                        }
+
+                        HorizontalDivider(color = Color(0xFF494354))
+
+                        // AUTOMATIC BACKUP
+
+                        Text(
+                            "Automatic backup",
+                            color = SettingsText,
+                            fontWeight = FontWeight.Medium
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+
+                            Text(
+                                if (autoBackupEnabled) "Enabled" else "Paused",
+                                color = if (autoBackupEnabled) {
+                                    SettingsPurple
+                                } else {
+                                    SettingsMuted
+                                }
+                            )
+
+                            Switch(
+                                checked = autoBackupEnabled,
+                                onCheckedChange = { enabled ->
+
+                                    autoBackupEnabled = enabled
+
+                                    RecallBackupPreferences.setAutoBackupEnabled(
+                                        context,
+                                        enabled
+                                    )
+
+                                    RecallBackupScheduler.schedule(context)
+                                }
+                            )
+                        }
+
+                        // BACKUP FREQUENCY
+
+                        Text(
+                            "Backup frequency",
+                            color = SettingsText,
+                            fontWeight = FontWeight.Medium
+                        )
+
+                        listOf(
+                            RecallBackupPreferences.DAILY,
+                            RecallBackupPreferences.WEEKLY,
+                            RecallBackupPreferences.MONTHLY
+                        ).forEach { frequency ->
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+
+                                Text(frequency, color = SettingsText)
+
+                                RadioButton(
+                                    selected = backupFrequency == frequency,
+                                    onClick = {
+
+                                        backupFrequency = frequency
+
+                                        RecallBackupPreferences.setFrequency(
+                                            context,
+                                            frequency
+                                        )
+
+                                        RecallBackupScheduler.schedule(context)
+                                    }
+                                )
+                            }
+                        }
+
+                        Text(
+                            "When automatic backup is enabled, Recall uploads new memories to every enabled and connected destination at the selected frequency. You can enable both Drive and Photos. Disabling automatic backup keeps new memories on this device.",
                             color = SettingsMuted,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-
-                    if (accountMessage.isNotBlank()) {
-
-                        Text(
-                            text = accountMessage,
-                            modifier = Modifier.fillMaxWidth(),
-                            color = SettingsPurple,
-                            style = MaterialTheme.typography.bodySmall,
-                            softWrap = true
-                        )
-                    }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
             }
-
-            // GOOGLE DRIVE
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = SettingsCard
-                ),
-                shape = MaterialTheme.shapes.large
-            ) {
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-
-                    Text(
-                        "Google Drive",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = SettingsText
-                    )
-
-                    Text(
-                        "Connect your Google Drive account to let Recall store your memories in your own Drive.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = SettingsMuted
-                    )
-
-                    if (driveAccessToken != null) {
-
-                        Text(
-                            "DRIVE CONNECTED",
-                            color = SettingsPurple,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Text(
-                            "Connected Google account:",
-                            color = SettingsMuted,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-
-                        Text(
-                            text = driveAccountEmail
-                                ?: "Retrieving account email...",
-                            modifier = Modifier.fillMaxWidth(),
-                            color = SettingsText,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            softWrap = true
-                        )
-
-                        OutlinedButton(
-                            onClick = {
-                                showDriveDisconnectConfirmation = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !disconnectingDrive
-                        ) {
-
-                            Text(
-                                if (disconnectingDrive) {
-                                    "Disconnecting..."
-                                } else {
-                                    "Disconnect Google Drive"
-                                }
-                            )
-                        }
-
-                    } else {
-
-                        Text(
-                            "NOT CONNECTED",
-                            color = SettingsMuted,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Button(
-                            onClick = {
-                                connectGoogleDrive()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !connectingDrive && !disconnectingDrive
-                        ) {
-
-                            Text(
-                                if (connectingDrive) {
-                                    "Connecting to Google Drive..."
-                                } else {
-                                    "Connect Google Drive"
-                                }
-                            )
-                        }
-                    }
-
-                    Text(
-                        "Recall requests access to files it creates or that you explicitly open with the app. Your other Drive files remain outside this permission.",
-                        color = SettingsMuted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-
-                    if (driveMessage.isNotBlank()) {
-
-                        Text(
-                            text = driveMessage,
-                            modifier = Modifier.fillMaxWidth(),
-                            color = SettingsPurple,
-                            style = MaterialTheme.typography.bodySmall,
-                            softWrap = true
-                        )
-                    }
-                }
-            }
-
-            // GOOGLE PHOTOS
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = SettingsCard
-                ),
-                shape = MaterialTheme.shapes.large
-            ) {
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-
-                    Text(
-                        "Google Photos",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = SettingsText
-                    )
-
-                    Text(
-                        "Connect Google Photos to let Recall upload your newly captured images directly to your Photos library.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = SettingsMuted
-                    )
-
-                    if (photosAccessToken != null) {
-
-                        Text(
-                            "PHOTOS CONNECTED",
-                            color = SettingsPurple,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Text(
-                            "Connected Google account:",
-                            color = SettingsMuted,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-
-                        Text(
-                            text = photosAccountEmail
-                                ?: "Retrieving account email...",
-                            modifier = Modifier.fillMaxWidth(),
-                            color = SettingsText,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            softWrap = true
-                        )
-
-                        OutlinedButton(
-                            onClick = {
-                                showPhotosDisconnectConfirmation = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !disconnectingPhotos
-                        ) {
-
-                            Text(
-                                if (disconnectingPhotos) {
-                                    "Disconnecting..."
-                                } else {
-                                    "Disconnect Google Photos"
-                                }
-                            )
-                        }
-
-                    } else {
-
-                        Text(
-                            "NOT CONNECTED",
-                            color = SettingsMuted,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Button(
-                            onClick = {
-                                connectGooglePhotos()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !connectingPhotos && !disconnectingPhotos
-                        ) {
-
-                            Text(
-                                if (connectingPhotos) {
-                                    "Connecting to Google Photos..."
-                                } else {
-                                    "Connect Google Photos"
-                                }
-                            )
-                        }
-                    }
-
-                    Text(
-                        "Recall requests permission to add new images to Google Photos. It cannot browse your existing Photos library.",
-                        color = SettingsMuted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-
-                    if (photosMessage.isNotBlank()) {
-
-                        Text(
-                            text = photosMessage,
-                            modifier = Modifier.fillMaxWidth(),
-                            color = SettingsPurple,
-                            style = MaterialTheme.typography.bodySmall,
-                            softWrap = true
-                        )
-                    }
-                }
-            }
-
-            // CLOUD BACKUP
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = SettingsCard
-                ),
-                shape = MaterialTheme.shapes.large
-            ) {
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-
-                    Text(
-                        "Cloud Backup",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = SettingsText
-                    )
-
-                    Text(
-                        "Choose where Recall should back up your memories.",
-                        color = SettingsMuted,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-
-                    Text(
-                        "Backup destination",
-                        color = SettingsText,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    listOf(
-                        RecallBackupPreferences.DRIVE,
-                        RecallBackupPreferences.PHOTOS
-                    ).forEach { destination ->
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-
-                            Text(
-                                destination,
-                                color = SettingsText
-                            )
-
-                            RadioButton(
-                                selected = backupDestination == destination,
-                                onClick = {
-
-                                    backupDestination = destination
-
-                                    RecallBackupPreferences.setDestination(
-                                        context,
-                                        destination
-                                    )
-
-                                    RecallBackupScheduler.schedule(context)
-                                }
-                            )
-                        }
-                    }
-
-                    HorizontalDivider(
-                        color = Color(0xFF494354)
-                    )
-
-                    Text(
-                        "Automatic backup",
-                        color = SettingsText,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-
-                        Text(
-                            if (autoBackupEnabled) "Enabled" else "Paused",
-                            color = if (autoBackupEnabled) {
-                                SettingsPurple
-                            } else {
-                                SettingsMuted
-                            }
-                        )
-
-                        Switch(
-                            checked = autoBackupEnabled,
-                            onCheckedChange = { enabled ->
-
-                                autoBackupEnabled = enabled
-
-                                RecallBackupPreferences.setAutoBackupEnabled(
-                                    context,
-                                    enabled
-                                )
-
-                                RecallBackupScheduler.schedule(context)
-                            }
-                        )
-                    }
-
-                    Text(
-                        "Backup frequency",
-                        color = SettingsText,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    listOf(
-                        RecallBackupPreferences.DAILY,
-                        RecallBackupPreferences.WEEKLY,
-                        RecallBackupPreferences.MONTHLY
-                    ).forEach { frequency ->
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-
-                            Text(
-                                frequency,
-                                color = SettingsText
-                            )
-
-                            RadioButton(
-                                selected = backupFrequency == frequency,
-                                onClick = {
-
-                                    backupFrequency = frequency
-
-                                    RecallBackupPreferences.setFrequency(
-                                        context,
-                                        frequency
-                                    )
-
-                                    RecallBackupScheduler.schedule(context)
-                                }
-                            )
-                        }
-                    }
-
-                    Text(
-                        "Google Drive automatic backup is supported by the existing backup worker. Google Photos direct uploads will be connected to the Library in the next integration step. Changing destinations will not move or delete existing backups.",
-                        color = SettingsMuted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
         }
     }
 
@@ -1445,33 +1515,23 @@ fun SettingsScreen(
                             try {
 
                                 googleAuth.signOut()
-
-                                accountMessage =
-                                    "Signed out successfully."
+                                accountMessage = "Signed out successfully."
 
                             } catch (e: Exception) {
 
                                 accountMessage =
-                                    e.localizedMessage
-                                        ?: "Sign-out failed."
+                                    e.localizedMessage ?: "Sign-out failed."
                             }
                         }
                     }
                 ) {
-
-                    Text(
-                        "Sign Out",
-                        color = SettingsPurple
-                    )
+                    Text("Sign Out", color = SettingsPurple)
                 }
             },
 
             dismissButton = {
-
                 TextButton(
-                    onClick = {
-                        showSignOutConfirmation = false
-                    }
+                    onClick = { showSignOutConfirmation = false }
                 ) {
                     Text("Cancel")
                 }
@@ -1507,25 +1567,17 @@ fun SettingsScreen(
 
                 TextButton(
                     onClick = {
-
                         showDriveDisconnectConfirmation = false
                         disconnectGoogleDrive()
                     }
                 ) {
-
-                    Text(
-                        "Disconnect",
-                        color = SettingsPurple
-                    )
+                    Text("Disconnect", color = SettingsPurple)
                 }
             },
 
             dismissButton = {
-
                 TextButton(
-                    onClick = {
-                        showDriveDisconnectConfirmation = false
-                    }
+                    onClick = { showDriveDisconnectConfirmation = false }
                 ) {
                     Text("Cancel")
                 }
@@ -1552,7 +1604,7 @@ fun SettingsScreen(
 
             text = {
                 Text(
-                    "Recall will clear its current Google Photos access token. " +
+                    "Recall will clear its current Google Photos access. " +
                             "Images already uploaded to Google Photos will not be deleted."
                 )
             },
@@ -1561,25 +1613,17 @@ fun SettingsScreen(
 
                 TextButton(
                     onClick = {
-
                         showPhotosDisconnectConfirmation = false
                         disconnectGooglePhotos()
                     }
                 ) {
-
-                    Text(
-                        "Disconnect",
-                        color = SettingsPurple
-                    )
+                    Text("Disconnect", color = SettingsPurple)
                 }
             },
 
             dismissButton = {
-
                 TextButton(
-                    onClick = {
-                        showPhotosDisconnectConfirmation = false
-                    }
+                    onClick = { showPhotosDisconnectConfirmation = false }
                 ) {
                     Text("Cancel")
                 }

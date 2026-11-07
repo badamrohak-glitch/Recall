@@ -69,7 +69,6 @@ object RecallPhotosStorage {
         try {
 
             uploadConnection.outputStream.use { output ->
-
                 imageFile.inputStream().use { input ->
                     input.copyTo(output)
                 }
@@ -100,27 +99,20 @@ object RecallPhotosStorage {
         }
 
         // STEP 2: Create the image in Google Photos.
+        // No automatic description is added.
 
         val newMediaItem = JSONObject().apply {
 
             put(
-                "description",
-                "Backed up from Recall"
-            )
-
-            put(
                 "simpleMediaItem",
                 JSONObject().apply {
-
                     put("uploadToken", uploadToken)
                     put("fileName", imageFile.name)
-
                 }
             )
         }
 
         val requestBody = JSONObject().apply {
-
             put(
                 "newMediaItems",
                 JSONArray().put(newMediaItem)
@@ -150,7 +142,6 @@ object RecallPhotosStorage {
         try {
 
             createConnection.outputStream.use { output ->
-
                 output.write(
                     requestBody.toString().toByteArray(Charsets.UTF_8)
                 )
@@ -183,7 +174,6 @@ object RecallPhotosStorage {
             val status = result.optJSONObject("status")
 
             if (status != null && status.optInt("code", 0) != 0) {
-
                 throw Exception(
                     status.optString(
                         "message",

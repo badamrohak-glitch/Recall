@@ -29,11 +29,14 @@ object RecallBackupStatus {
         return "${fileName}_drive_file_id"
     }
 
+    private fun photosIdKey(fileName: String): String {
+        return "${fileName}_photos_media_item_id"
+    }
+
     private fun currentDestination(context: Context): String {
         return RecallBackupPreferences.getDestination(context)
     }
 
-    // Gets status for the currently selected backup destination.
     fun getStatus(
         context: Context,
         fileName: String
@@ -45,7 +48,6 @@ object RecallBackupStatus {
         )
     }
 
-    // Gets status for a specific destination.
     fun getStatus(
         context: Context,
         fileName: String,
@@ -53,7 +55,6 @@ object RecallBackupStatus {
     ): String {
 
         val preferences = prefs(context)
-
         val key = statusKey(fileName, destination)
 
         val savedStatus = preferences.getString(key, null)
@@ -62,7 +63,7 @@ object RecallBackupStatus {
             return savedStatus
         }
 
-        // Migrate an older status to Google Drive.
+        // Migrate older status values to Google Drive.
         if (destination == RecallBackupPreferences.DRIVE) {
 
             val oldStatus = preferences.getString(
@@ -84,7 +85,6 @@ object RecallBackupStatus {
         return NOT_BACKED_UP
     }
 
-    // Sets status for the currently selected destination.
     fun setStatus(
         context: Context,
         fileName: String,
@@ -94,11 +94,10 @@ object RecallBackupStatus {
             context,
             fileName,
             status,
-            RecallBackupPreferences.DRIVE
+            currentDestination(context)
         )
     }
 
-    // Sets status for a specific destination.
     fun setStatus(
         context: Context,
         fileName: String,
@@ -140,15 +139,53 @@ object RecallBackupStatus {
             .apply()
     }
 
+    fun getPhotosMediaItemId(
+        context: Context,
+        fileName: String
+    ): String? {
+        return prefs(context).getString(
+            photosIdKey(fileName),
+            null
+        )
+    }
+
+    fun setPhotosMediaItemId(
+        context: Context,
+        fileName: String,
+        mediaItemId: String
+    ) {
+        prefs(context).edit()
+            .putString(photosIdKey(fileName), mediaItemId)
+            .putString(
+                statusKey(
+                    fileName,
+                    RecallBackupPreferences.PHOTOS
+                ),
+                BACKED_UP
+            )
+            .apply()
+    }
+
     fun clearStatus(
         context: Context,
         fileName: String
     ) {
         prefs(context).edit()
-            .remove(statusKey(fileName, RecallBackupPreferences.DRIVE))
-            .remove(statusKey(fileName, RecallBackupPreferences.PHOTOS))
+            .remove(
+                statusKey(
+                    fileName,
+                    RecallBackupPreferences.DRIVE
+                )
+            )
+            .remove(
+                statusKey(
+                    fileName,
+                    RecallBackupPreferences.PHOTOS
+                )
+            )
             .remove("${fileName}_status")
             .remove(driveIdKey(fileName))
+            .remove(photosIdKey(fileName))
             .apply()
     }
 }

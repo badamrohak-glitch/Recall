@@ -1,8 +1,10 @@
+
 package com.recall.app
 
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -26,11 +28,16 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -174,7 +181,10 @@ private fun loadLibraryCaptures(
                 memory?.tags ?: ""
             ) ?: "",
 
-            recognizedText = memory?.recognizedText ?: "",
+            recognizedText = preferences.getString(
+                "${file.name}_recognizedText",
+                memory?.recognizedText ?: ""
+            ) ?: "",
 
             labels = memory?.labels?.joinToString(" ") ?: "",
 
@@ -184,8 +194,7 @@ private fun loadLibraryCaptures(
 }
 
 /*
- * Opens a category image using the same details dialog
- * that is used by images inside the main Library.
+ * Category image details dialog.
  */
 @Composable
 fun RecallCategoryMemoryDialog(
@@ -225,13 +234,8 @@ fun RecallCategoryMemoryDialog(
             },
 
             confirmButton = {
-                TextButton(
-                    onClick = onDismiss
-                ) {
-                    Text(
-                        "Close",
-                        color = LibraryPurple
-                    )
+                TextButton(onClick = onDismiss) {
+                    Text("Close", color = LibraryPurple)
                 }
             }
         )
@@ -241,7 +245,6 @@ fun RecallCategoryMemoryDialog(
 
     LibraryDetailsDialog(
         capture = capture,
-
         onDismiss = onDismiss,
 
         onSave = { title, category, note, tags ->
@@ -282,18 +285,12 @@ fun RecallCategoryMemoryDialog(
                     .remove("${file.name}_category")
                     .remove("${file.name}_note")
                     .remove("${file.name}_tags")
+                    .remove("${file.name}_recognizedText")
                     .remove("${file.name}_updatedAtMillis")
                     .apply()
 
-                RecallAiIndexer.removeMemory(
-                    context,
-                    file.name
-                )
-
-                RecallBackupStatus.clearStatus(
-                    context,
-                    file.name
-                )
+                RecallAiIndexer.removeMemory(context, file.name)
+                RecallBackupStatus.clearStatus(context, file.name)
 
                 Toast.makeText(
                     context,
@@ -325,37 +322,15 @@ fun RecallLibraryScreen() {
         mutableStateOf(loadLibraryCaptures(context))
     }
 
-    var searchText by remember {
-        mutableStateOf("")
-    }
+    var searchText by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf("All") }
+    var selectedCapture by remember { mutableStateOf<LibraryCapture?>(null) }
 
-    var selectedCategory by remember {
-        mutableStateOf("All")
-    }
-
-    var selectedCapture by remember {
-        mutableStateOf<LibraryCapture?>(null)
-    }
-
-    var selectionMode by remember {
-        mutableStateOf(false)
-    }
-
-    var selectedFiles by remember {
-        mutableStateOf(setOf<String>())
-    }
-
-    var showBulkDeleteConfirmation by remember {
-        mutableStateOf(false)
-    }
-
-    var isBackingUp by remember {
-        mutableStateOf(false)
-    }
-
-    var backupRefresh by remember {
-        mutableIntStateOf(0)
-    }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedFiles by remember { mutableStateOf(setOf<String>()) }
+    var showBulkDeleteConfirmation by remember { mutableStateOf(false) }
+    var isBackingUp by remember { mutableStateOf(false) }
+    var backupRefresh by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
         captures = loadLibraryCaptures(context)
@@ -468,10 +443,7 @@ fun RecallLibraryScreen() {
                                     selectedFiles = emptySet()
                                 }
                             ) {
-                                Text(
-                                    "Cancel",
-                                    color = LibraryPurple
-                                )
+                                Text("Cancel", color = LibraryPurple)
                             }
                         }
 
@@ -505,11 +477,7 @@ fun RecallLibraryScreen() {
                                         filteredCaptures.all {
                                             it.file.name in selectedFiles
                                         }
-                                    ) {
-                                        "Deselect all"
-                                    } else {
-                                        "Select all"
-                                    },
+                                    ) "Deselect all" else "Select all",
                                     color = LibraryPurple
                                 )
                             }
@@ -529,27 +497,22 @@ fun RecallLibraryScreen() {
                                     if (isPhotos) {
 
                                         if (!RecallPhotosSession.isConnected) {
-
                                             Toast.makeText(
                                                 context,
                                                 "Connect Google Photos in Settings first.",
                                                 Toast.LENGTH_LONG
                                             ).show()
-
                                             return@Button
                                         }
 
-                                        token =
-                                            RecallPhotosSession.accessToken.orEmpty()
+                                        token = RecallPhotosSession.accessToken.orEmpty()
 
                                         if (token.isBlank()) {
-
                                             Toast.makeText(
                                                 context,
                                                 "Google Photos connection expired. Reconnect in Settings.",
                                                 Toast.LENGTH_LONG
                                             ).show()
-
                                             return@Button
                                         }
 
@@ -558,33 +521,23 @@ fun RecallLibraryScreen() {
                                     } else {
 
                                         if (!RecallDriveSession.isConnected) {
-
                                             Toast.makeText(
                                                 context,
                                                 "Connect Google Drive in Settings first.",
                                                 Toast.LENGTH_LONG
                                             ).show()
-
                                             return@Button
                                         }
 
-                                        token =
-                                            RecallDriveSession.accessToken.orEmpty()
+                                        token = RecallDriveSession.accessToken.orEmpty()
+                                        folderId = RecallDriveSession.folderId
 
-                                        folderId =
-                                            RecallDriveSession.folderId
-
-                                        if (
-                                            token.isBlank() ||
-                                            folderId.isNullOrBlank()
-                                        ) {
-
+                                        if (token.isBlank() || folderId.isNullOrBlank()) {
                                             Toast.makeText(
                                                 context,
                                                 "Google Drive connection is unavailable. Reconnect it in Settings.",
                                                 Toast.LENGTH_LONG
                                             ).show()
-
                                             return@Button
                                         }
                                     }
@@ -615,9 +568,7 @@ fun RecallLibraryScreen() {
 
                                                 if (isPhotos) {
 
-                                                    withContext<String>(
-                                                        Dispatchers.IO
-                                                    ) {
+                                                    withContext(Dispatchers.IO) {
                                                         RecallPhotosStorage.uploadImage(
                                                             capture.file,
                                                             token
@@ -634,16 +585,13 @@ fun RecallLibraryScreen() {
                                                 } else {
 
                                                     val uploadedFileId =
-                                                        withContext(
-                                                            Dispatchers.IO
-                                                        ) {
-                                                            RecallDriveStorage(
-                                                                context
-                                                            ).uploadImage(
-                                                                capture.file,
-                                                                token,
-                                                                folderId!!
-                                                            )
+                                                        withContext(Dispatchers.IO) {
+                                                            RecallDriveStorage(context)
+                                                                .uploadImage(
+                                                                    capture.file,
+                                                                    token,
+                                                                    folderId!!
+                                                                )
                                                         }
 
                                                     RecallBackupStatus.setDriveFileId(
@@ -683,8 +631,7 @@ fun RecallLibraryScreen() {
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
-                                enabled = selectedFiles.isNotEmpty() &&
-                                        !isBackingUp,
+                                enabled = selectedFiles.isNotEmpty() && !isBackingUp,
                                 shape = RoundedCornerShape(10.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = LibraryPurple,
@@ -692,11 +639,7 @@ fun RecallLibraryScreen() {
                                 )
                             ) {
                                 Text(
-                                    if (isBackingUp) {
-                                        "Backing up..."
-                                    } else {
-                                        "Backup"
-                                    },
+                                    if (isBackingUp) "Backing up..." else "Backup",
                                     color = LibraryBackground
                                 )
                             }
@@ -707,13 +650,9 @@ fun RecallLibraryScreen() {
                                 showBulkDeleteConfirmation = true
                             },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = selectedFiles.isNotEmpty() &&
-                                    !isBackingUp,
+                            enabled = selectedFiles.isNotEmpty() && !isBackingUp,
                             shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(
-                                1.dp,
-                                Color(0xFFFF7777)
-                            )
+                            border = BorderStroke(1.dp, Color(0xFFFF7777))
                         ) {
                             Text(
                                 "Delete permanently (${selectedFiles.size})",
@@ -729,9 +668,7 @@ fun RecallLibraryScreen() {
 
         OutlinedTextField(
             value = searchText,
-            onValueChange = {
-                searchText = it
-            },
+            onValueChange = { searchText = it },
             modifier = Modifier.fillMaxWidth(),
             placeholder = {
                 Text(
@@ -759,12 +696,8 @@ fun RecallLibraryScreen() {
 
                 FilterChip(
                     selected = selectedCategory == category,
-                    onClick = {
-                        selectedCategory = category
-                    },
-                    label = {
-                        Text(category)
-                    },
+                    onClick = { selectedCategory = category },
+                    label = { Text(category) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = LibraryPurple,
                         selectedLabelColor = LibraryBackground,
@@ -835,9 +768,7 @@ fun RecallLibraryScreen() {
                                 if (selectionMode) {
 
                                     selectedFiles =
-                                        if (
-                                            capture.file.name in selectedFiles
-                                        ) {
+                                        if (capture.file.name in selectedFiles) {
                                             selectedFiles - capture.file.name
                                         } else {
                                             selectedFiles + capture.file.name
@@ -869,14 +800,10 @@ fun RecallLibraryScreen() {
             onDismissRequest = {
                 showBulkDeleteConfirmation = false
             },
-
             containerColor = LibraryCard,
 
             title = {
-                Text(
-                    "Delete permanently?",
-                    color = Color.White
-                )
+                Text("Delete permanently?", color = Color.White)
             },
 
             text = {
@@ -893,25 +820,20 @@ fun RecallLibraryScreen() {
 
                         val preferences = libraryPreferences(context)
                         val editor = preferences.edit()
-
                         var failed = 0
 
                         captures
-                            .filter {
-                                it.file.name in selectedFiles
-                            }
+                            .filter { it.file.name in selectedFiles }
                             .forEach { capture ->
 
-                                if (
-                                    !capture.file.exists() ||
-                                    capture.file.delete()
-                                ) {
+                                if (!capture.file.exists() || capture.file.delete()) {
 
                                     editor
                                         .remove("${capture.file.name}_title")
                                         .remove("${capture.file.name}_category")
                                         .remove("${capture.file.name}_note")
                                         .remove("${capture.file.name}_tags")
+                                        .remove("${capture.file.name}_recognizedText")
                                         .remove("${capture.file.name}_updatedAtMillis")
 
                                     RecallAiIndexer.removeMemory(
@@ -960,10 +882,7 @@ fun RecallLibraryScreen() {
                         showBulkDeleteConfirmation = false
                     }
                 ) {
-                    Text(
-                        "Cancel",
-                        color = LibraryPurple
-                    )
+                    Text("Cancel", color = LibraryPurple)
                 }
             }
         )
@@ -975,6 +894,7 @@ fun RecallLibraryScreen() {
             capture = capture,
 
             onDismiss = {
+                captures = loadLibraryCaptures(context)
                 selectedCapture = null
             },
 
@@ -1010,8 +930,7 @@ fun RecallLibraryScreen() {
 
             onDelete = {
 
-                val deleted =
-                    !capture.file.exists() || capture.file.delete()
+                val deleted = !capture.file.exists() || capture.file.delete()
 
                 if (deleted) {
 
@@ -1021,6 +940,7 @@ fun RecallLibraryScreen() {
                         .remove("${capture.file.name}_category")
                         .remove("${capture.file.name}_note")
                         .remove("${capture.file.name}_tags")
+                        .remove("${capture.file.name}_recognizedText")
                         .remove("${capture.file.name}_updatedAtMillis")
                         .apply()
 
@@ -1085,22 +1005,16 @@ private fun LibraryImageCard(
         )
     }
 
-    var showImageViewer by remember(
-        capture.file.absolutePath
-    ) {
+    var showImageViewer by remember(capture.file.absolutePath) {
         mutableStateOf(false)
     }
 
     LaunchedEffect(selectionMode) {
-        if (selectionMode) {
-            showImageViewer = false
-        }
+        if (selectionMode) showImageViewer = false
     }
 
     Card(
-        modifier = modifier.clickable {
-            onClick()
-        },
+        modifier = modifier.clickable { onClick() },
         colors = CardDefaults.cardColors(
             containerColor = LibraryCard
         ),
@@ -1143,10 +1057,7 @@ private fun LibraryImageCard(
                             .background(LibraryCard),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            "Image unavailable",
-                            color = LibraryText
-                        )
+                        Text("Image unavailable", color = LibraryText)
                     }
                 }
 
@@ -1185,10 +1096,7 @@ private fun LibraryImageCard(
                                 Color(0x99000000),
                                 RoundedCornerShape(6.dp)
                             )
-                            .padding(
-                                horizontal = 7.dp,
-                                vertical = 4.dp
-                            )
+                            .padding(horizontal = 7.dp, vertical = 4.dp)
                     )
                 }
             }
@@ -1217,15 +1125,9 @@ private fun LibraryImageCard(
                 Text(
                     text = "Backup: $backupStatus",
                     color = when (backupStatus) {
-                        RecallBackupStatus.BACKED_UP ->
-                            Color(0xFF81C784)
-
-                        RecallBackupStatus.FAILED ->
-                            Color(0xFFFF7777)
-
-                        RecallBackupStatus.PENDING ->
-                            Color(0xFFFFD180)
-
+                        RecallBackupStatus.BACKED_UP -> Color(0xFF81C784)
+                        RecallBackupStatus.FAILED -> Color(0xFFFF7777)
+                        RecallBackupStatus.PENDING -> Color(0xFFFFD180)
                         else -> LibraryText
                     },
                     fontSize = 11.sp
@@ -1234,19 +1136,11 @@ private fun LibraryImageCard(
         }
     }
 
-    if (
-        showImageViewer &&
-        bitmap != null &&
-        !selectionMode
-    ) {
+    if (showImageViewer && bitmap != null && !selectionMode) {
 
         Dialog(
-            onDismissRequest = {
-                showImageViewer = false
-            },
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false
-            )
+            onDismissRequest = { showImageViewer = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
 
             Box(
@@ -1262,17 +1156,12 @@ private fun LibraryImageCard(
                 )
 
                 TextButton(
-                    onClick = {
-                        showImageViewer = false
-                    },
+                    onClick = { showImageViewer = false },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(12.dp)
                 ) {
-                    Text(
-                        "Close",
-                        color = Color.White
-                    )
+                    Text("Close", color = Color.White)
                 }
 
                 Text(
@@ -1312,14 +1201,8 @@ private fun LibraryDetailsDialog(
         mutableStateOf(capture.tags)
     }
 
-    var categoryExpanded by remember {
-        mutableStateOf(false)
-    }
-
-    var deleteConfirmation by remember {
-        mutableStateOf(false)
-    }
-
+    var categoryExpanded by remember { mutableStateOf(false) }
+    var deleteConfirmation by remember { mutableStateOf(false) }
     var showImageViewer by remember(capture.file.name) {
         mutableStateOf(false)
     }
@@ -1385,10 +1268,7 @@ private fun LibraryDetailsDialog(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            "Image unavailable",
-                            color = LibraryText
-                        )
+                        Text("Image unavailable", color = LibraryText)
                     }
                 }
 
@@ -1397,37 +1277,17 @@ private fun LibraryDetailsDialog(
                         SimpleDateFormat(
                             "dd MMM yyyy, hh:mm a",
                             Locale.getDefault()
-                        ).format(
-                            Date(capture.file.lastModified())
-                        )
+                        ).format(Date(capture.file.lastModified()))
                     }",
                     color = LibraryText,
                     fontSize = 12.sp
                 )
 
-                if (capture.recognizedText.isNotBlank()) {
-
-                    Text(
-                        "Recognized text",
-                        color = LibraryPurple,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = LibraryBackground
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(
-                            text = capture.recognizedText,
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            modifier = Modifier.padding(12.dp)
-                        )
-                    }
-                }
+                // NEW: Detect text and display saved OCR results.
+                LibraryTextRecognition(
+                    file = capture.file,
+                    initialText = capture.recognizedText
+                )
 
                 Text(
                     "EDITABLE DETAILS",
@@ -1444,9 +1304,7 @@ private fun LibraryDetailsDialog(
 
                 OutlinedTextField(
                     value = title,
-                    onValueChange = {
-                        title = it
-                    },
+                    onValueChange = { title = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     colors = libraryFieldColors()
@@ -1461,37 +1319,25 @@ private fun LibraryDetailsDialog(
                 Box {
 
                     OutlinedButton(
-                        onClick = {
-                            categoryExpanded = true
-                        },
+                        onClick = { categoryExpanded = true },
                         modifier = Modifier.fillMaxWidth(),
-                        border = BorderStroke(
-                            1.dp,
-                            LibraryFieldBorder
-                        ),
+                        border = BorderStroke(1.dp, LibraryFieldBorder),
                         colors = ButtonDefaults.outlinedButtonColors(
                             containerColor = LibraryFieldBackground
                         )
                     ) {
-                        Text(
-                            category,
-                            color = Color.White
-                        )
+                        Text(category, color = Color.White)
                     }
 
                     DropdownMenu(
                         expanded = categoryExpanded,
-                        onDismissRequest = {
-                            categoryExpanded = false
-                        }
+                        onDismissRequest = { categoryExpanded = false }
                     ) {
 
                         libraryCategories.forEach { item ->
 
                             DropdownMenuItem(
-                                text = {
-                                    Text(item)
-                                },
+                                text = { Text(item) },
                                 onClick = {
                                     category = item
                                     categoryExpanded = false
@@ -1509,9 +1355,7 @@ private fun LibraryDetailsDialog(
 
                 OutlinedTextField(
                     value = note,
-                    onValueChange = {
-                        note = it
-                    },
+                    onValueChange = { note = it },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         Text("What do you want to remember?")
@@ -1528,9 +1372,7 @@ private fun LibraryDetailsDialog(
 
                 OutlinedTextField(
                     value = tags,
-                    onValueChange = {
-                        tags = it
-                    },
+                    onValueChange = { tags = it },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         Text("Example: shoes, birthday, ideas")
@@ -1564,10 +1406,7 @@ private fun LibraryDetailsDialog(
                     containerColor = LibraryPurple
                 )
             ) {
-                Text(
-                    "Save",
-                    color = LibraryBackground
-                )
+                Text("Save", color = LibraryBackground)
             }
         },
 
@@ -1578,9 +1417,7 @@ private fun LibraryDetailsDialog(
             ) {
 
                 TextButton(
-                    onClick = {
-                        deleteConfirmation = true
-                    }
+                    onClick = { deleteConfirmation = true }
                 ) {
                     Text(
                         "Delete permanently",
@@ -1588,13 +1425,8 @@ private fun LibraryDetailsDialog(
                     )
                 }
 
-                TextButton(
-                    onClick = onDismiss
-                ) {
-                    Text(
-                        "Close",
-                        color = LibraryPurple
-                    )
+                TextButton(onClick = onDismiss) {
+                    Text("Close", color = LibraryPurple)
                 }
             }
         }
@@ -1603,16 +1435,11 @@ private fun LibraryDetailsDialog(
     if (deleteConfirmation) {
 
         AlertDialog(
-            onDismissRequest = {
-                deleteConfirmation = false
-            },
+            onDismissRequest = { deleteConfirmation = false },
             containerColor = LibraryCard,
 
             title = {
-                Text(
-                    "Delete permanently?",
-                    color = Color.White
-                )
+                Text("Delete permanently?", color = Color.White)
             },
 
             text = {
@@ -1624,9 +1451,7 @@ private fun LibraryDetailsDialog(
 
             confirmButton = {
 
-                TextButton(
-                    onClick = onDelete
-                ) {
+                TextButton(onClick = onDelete) {
                     Text(
                         "Delete permanently",
                         color = Color(0xFFFF7777)
@@ -1637,14 +1462,9 @@ private fun LibraryDetailsDialog(
             dismissButton = {
 
                 TextButton(
-                    onClick = {
-                        deleteConfirmation = false
-                    }
+                    onClick = { deleteConfirmation = false }
                 ) {
-                    Text(
-                        "Cancel",
-                        color = LibraryPurple
-                    )
+                    Text("Cancel", color = LibraryPurple)
                 }
             }
         )
@@ -1653,12 +1473,8 @@ private fun LibraryDetailsDialog(
     if (showImageViewer && bitmap != null) {
 
         Dialog(
-            onDismissRequest = {
-                showImageViewer = false
-            },
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false
-            )
+            onDismissRequest = { showImageViewer = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
 
             Box(
@@ -1674,17 +1490,12 @@ private fun LibraryDetailsDialog(
                 )
 
                 TextButton(
-                    onClick = {
-                        showImageViewer = false
-                    },
+                    onClick = { showImageViewer = false },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(12.dp)
                 ) {
-                    Text(
-                        "Close",
-                        color = Color.White
-                    )
+                    Text("Close", color = Color.White)
                 }
 
                 Text(
@@ -1695,6 +1506,199 @@ private fun LibraryDetailsDialog(
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 24.dp)
                 )
+            }
+        }
+    }
+}
+
+/*
+ * NEW: Library image text recognition.
+ * Detected text is saved locally in recall_library preferences.
+ */
+@Composable
+private fun LibraryTextRecognition(
+    file: File,
+    initialText: String
+) {
+
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+
+    var detectedText by remember(file.absolutePath) {
+        mutableStateOf(initialText)
+    }
+
+    var detecting by remember(file.absolutePath) {
+        mutableStateOf(false)
+    }
+
+    var message by remember(file.absolutePath) {
+        mutableStateOf("")
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(9.dp)
+    ) {
+
+        Text(
+            "TEXT DETECTION",
+            color = LibraryPurple,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Button(
+            onClick = {
+
+                if (detecting) return@Button
+
+                if (!file.exists()) {
+                    message = "Image file is unavailable."
+                    return@Button
+                }
+
+                detecting = true
+                message = "Reading text from image..."
+
+                val recognizer = TextRecognition.getClient(
+                    TextRecognizerOptions.DEFAULT_OPTIONS
+                )
+
+                try {
+
+                    val image = InputImage.fromFilePath(
+                        context,
+                        Uri.fromFile(file)
+                    )
+
+                    recognizer.process(image)
+                        .addOnSuccessListener { result ->
+
+                            val extracted = result.text.trim()
+
+                            detectedText = extracted
+
+                            libraryPreferences(context)
+                                .edit()
+                                .putString(
+                                    "${file.name}_recognizedText",
+                                    extracted
+                                )
+                                .apply()
+
+                            message = if (extracted.isBlank()) {
+                                "No readable text was found in this image."
+                            } else {
+                                "Text detected and saved successfully."
+                            }
+
+                            detecting = false
+                            recognizer.close()
+                        }
+                        .addOnFailureListener {
+
+                            message = "Couldn't detect text. Please try again."
+                            detecting = false
+                            recognizer.close()
+                        }
+
+                } catch (e: Exception) {
+
+                    message = "Unable to process this image."
+                    detecting = false
+                    recognizer.close()
+                }
+            },
+            enabled = !detecting,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = LibraryPurple,
+                contentColor = LibraryBackground
+            )
+        ) {
+
+            if (detecting) {
+
+                CircularProgressIndicator(
+                    modifier = Modifier.size(17.dp),
+                    strokeWidth = 2.dp,
+                    color = LibraryBackground
+                )
+
+                Spacer(Modifier.width(9.dp))
+
+                Text("Detecting text...")
+
+            } else {
+
+                Text(
+                    if (detectedText.isBlank()) {
+                        "Detect Text"
+                    } else {
+                        "Detect Text Again"
+                    },
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        if (message.isNotBlank()) {
+
+            Text(
+                message,
+                color = LibraryText,
+                fontSize = 12.sp
+            )
+        }
+
+        if (detectedText.isNotBlank()) {
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = LibraryBackground
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp)
+                ) {
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+
+                        Text(
+                            "Detected text",
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        TextButton(
+                            onClick = {
+                                clipboard.setText(
+                                    AnnotatedString(detectedText)
+                                )
+                                message = "Text copied."
+                            }
+                        ) {
+                            Text("Copy", color = LibraryPurple)
+                        }
+                    }
+
+                    Text(
+                        detectedText,
+                        color = Color.White,
+                        fontSize = 13.sp
+                    )
+                }
             }
         }
     }
@@ -1721,15 +1725,11 @@ fun RecallZoomableImage(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(bitmap) {
-                detectTransformGestures {
-                        centroid, pan, zoom, _ ->
+                detectTransformGestures { centroid, pan, zoom, _ ->
 
                     val previousScale = scale
 
-                    val newScale = (scale * zoom).coerceIn(
-                        1f,
-                        5f
-                    )
+                    val newScale = (scale * zoom).coerceIn(1f, 5f)
 
                     val center = Offset(
                         size.width / 2f,

@@ -1,6 +1,10 @@
+﻿
 package com.recall.app
 
 import android.Manifest
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.Icon
 import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -46,11 +50,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.google.firebase.FirebaseApp
@@ -70,12 +78,13 @@ private val Purple = Color(0xFFB69CFF)
 private val SecondaryText = Color(0xFFAAA6B8)
 
 private val captureCategories = listOf(
-    "Shopping",
-    "Places",
-    "Food",
-    "Study",
-    "Designs",
+    "Products",
     "Articles",
+    "Places",
+    "Study",
+    "Food",
+    "Clothing & Accessories",
+    "Design & Inspiration",
     "Other"
 )
 
@@ -150,36 +159,50 @@ class MainActivity : ComponentActivity() {
         setContent {
             RecallTheme {
 
+                val isCropping = captureImagePath != null && croppedPreviewPath == null
+
+                DisposableEffect(isCropping) {
+                    val controller = WindowInsetsControllerCompat(window, window.decorView)
+                    val navigationBars = WindowInsetsCompat.Type.navigationBars()
+                    val wasVisible = ViewCompat.getRootWindowInsets(window.decorView)?.isVisible(WindowInsetsCompat.Type.navigationBars()) ?: true
+
+                    if (isCropping) {
+                        controller.hide(navigationBars)
+                        controller.systemBarsBehavior =
+                            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    } else {
+                        controller.show(navigationBars)
+                    }
+
+                    onDispose {
+                        if (wasVisible) {
+                            controller.show(navigationBars)
+                        } else {
+                            controller.hide(navigationBars)
+                        }
+                    }
+                }
+
                 val imagePath = captureImagePath
                 val previewPath = croppedPreviewPath
 
                 when {
                     previewPath != null -> {
-                        CaptureChoiceScreen(
+                        CaptureDetailsScreen(
                             imagePath = previewPath,
-                            onSendToLibrary = {
-                                saveMemory(
-                                    previewPath,
-                                    title = "",
-                                    category = "Other",
-                                    note = "",
-                                    tags = "",
-                                    alsoSave = false
-                                )
-                            },
-                            onSaveAndSendToLibrary = {
-                                saveMemory(
-                                    previewPath,
-                                    title = "",
-                                    category = "Other",
-                                    note = "",
-                                    tags = "",
-                                    alsoSave = true
-                                )
-                            },
                             onCancel = {
                                 File(previewPath).delete()
                                 croppedPreviewPath = null
+                            },
+                            onSave = { title, category, note, tags, alsoSave ->
+                                saveMemory(
+                                    previewPath = previewPath,
+                                    title = title,
+                                    category = category,
+                                    note = note,
+                                    tags = tags,
+                                    alsoSave = alsoSave
+                                )
                             }
                         )
                     }
@@ -1010,7 +1033,7 @@ fun CaptureCropScreen(
                 ),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Preview Crop", color = Background)
+                Text("Continue", color = Background)
             }
         }
     }
@@ -1100,9 +1123,8 @@ private fun CaptureChoiceScreen(
 private fun CaptureDetailsScreen(
     imagePath: String,
     onCancel: () -> Unit,
-    onSave: (String, String, String, String) -> Unit
+    onSave: (String, String, String, String, Boolean) -> Unit
 ) {
-
     val bitmap = remember(imagePath) {
         BitmapFactory.decodeFile(imagePath)
     }
@@ -1113,25 +1135,11 @@ private fun CaptureDetailsScreen(
         }
     }
 
-    var title by remember(imagePath) {
-        mutableStateOf("")
-    }
-
-    var category by remember(imagePath) {
-        mutableStateOf("Other")
-    }
-
-    var note by remember(imagePath) {
-        mutableStateOf("")
-    }
-
-    var tags by remember(imagePath) {
-        mutableStateOf("")
-    }
-
-    var categoryExpanded by remember {
-        mutableStateOf(false)
-    }
+    var title by remember(imagePath) { mutableStateOf("") }
+    var category by remember(imagePath) { mutableStateOf("Other") }
+    var note by remember(imagePath) { mutableStateOf("") }
+    var tags by remember(imagePath) { mutableStateOf("") }
+    var categoryExpanded by remember { mutableStateOf(false) }
 
     BackHandler {
         onCancel()
@@ -1142,25 +1150,21 @@ private fun CaptureDetailsScreen(
             .fillMaxSize()
             .background(Background)
             .verticalScroll(rememberScrollState())
-            .padding(20.dp)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-
         Text(
-            text = "Save Memory",
+            text = "Save Image",
             color = Purple,
             fontSize = 26.sp,
             fontWeight = FontWeight.Bold
         )
 
-        Spacer(modifier = Modifier.height(6.dp))
-
         Text(
-            text = "Review your image and add details before saving.",
+            text = "Add a description and details to remember this image.",
             color = SecondaryText,
             fontSize = 14.sp
         )
-
-        Spacer(modifier = Modifier.height(18.dp))
 
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -1169,35 +1173,38 @@ private fun CaptureDetailsScreen(
             ),
             shape = RoundedCornerShape(18.dp)
         ) {
-
             if (bitmap != null) {
-
                 Image(
                     bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Cropped memory preview",
+                    contentDescription = "Image to save",
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 340.dp),
                     contentScale = ContentScale.Fit
                 )
-
             } else {
-
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(200.dp),
+                        .height(180.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "Preview image unavailable",
+                        "Image unavailable",
                         color = SecondaryText
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            "Description",
+            color = Purple,
+            fontSize = 19.sp,
+            fontWeight = FontWeight.Bold
+        )
 
         Text(
             "Title",
@@ -1210,7 +1217,7 @@ private fun CaptureDetailsScreen(
             onValueChange = { title = it },
             modifier = Modifier.fillMaxWidth(),
             placeholder = {
-                Text("Give this memory a title")
+                Text("Give this image a title")
             },
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
@@ -1222,8 +1229,6 @@ private fun CaptureDetailsScreen(
             )
         )
 
-        Spacer(modifier = Modifier.height(14.dp))
-
         Text(
             "Category",
             color = Color.White,
@@ -1231,14 +1236,13 @@ private fun CaptureDetailsScreen(
         )
 
         Box {
-
             OutlinedButton(
                 onClick = {
                     categoryExpanded = true
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
             ) {
-
                 Text(
                     category,
                     color = Color.White
@@ -1251,9 +1255,7 @@ private fun CaptureDetailsScreen(
                     categoryExpanded = false
                 }
             ) {
-
                 captureCategories.forEach { item ->
-
                     DropdownMenuItem(
                         text = {
                             Text(item)
@@ -1267,8 +1269,6 @@ private fun CaptureDetailsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
-
         Text(
             "Notes",
             color = Color.White,
@@ -1280,7 +1280,7 @@ private fun CaptureDetailsScreen(
             onValueChange = { note = it },
             modifier = Modifier.fillMaxWidth(),
             placeholder = {
-                Text("What do you want to remember about this?")
+                Text("What do you want to remember?")
             },
             minLines = 3,
             colors = OutlinedTextFieldDefaults.colors(
@@ -1291,8 +1291,6 @@ private fun CaptureDetailsScreen(
                 cursorColor = Purple
             )
         )
-
-        Spacer(modifier = Modifier.height(14.dp))
 
         Text(
             "Tags",
@@ -1317,7 +1315,7 @@ private fun CaptureDetailsScreen(
             )
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         Button(
             onClick = {
@@ -1325,44 +1323,63 @@ private fun CaptureDetailsScreen(
                     title.trim(),
                     category,
                     note.trim(),
-                    tags.trim()
+                    tags.trim(),
+                    false
                 )
             },
+            enabled = bitmap != null,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp),
-            enabled = bitmap != null,
+                .height(54.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = Purple,
-                disabledContainerColor = Color.Gray
+                containerColor = Purple
             ),
             shape = RoundedCornerShape(14.dp)
         ) {
             Text(
-                "Save Memory",
+                "Send to Library",
                 color = Background,
                 fontWeight = FontWeight.Bold
             )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
-
         OutlinedButton(
-            onClick = onCancel,
+            onClick = {
+                onSave(
+                    title.trim(),
+                    category,
+                    note.trim(),
+                    tags.trim(),
+                    true
+                )
+            },
+            enabled = bitmap != null,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp),
+                .height(54.dp),
             shape = RoundedCornerShape(14.dp)
         ) {
             Text(
-                "Cancel",
+                "Save and send to Library",
+                color = Purple,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        TextButton(
+            onClick = onCancel,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                "Cancel - crop again",
                 color = Purple
             )
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(12.dp))
     }
 }
+
 @Composable
 fun RecallHomeScreen(initialTab: String = "Home") {
 
@@ -1379,10 +1396,10 @@ fun RecallHomeScreen(initialTab: String = "Home") {
         mutableStateOf(GestureSettings.getSensitivity(context))
     }
 
+    // Kept for the triple-tap popup. The Home button has been removed.
     var showQuickCapture by remember { mutableStateOf(false) }
     var showExitDialog by remember { mutableStateOf(false) }
 
-    // First-launch onboarding state.
     val onboardingPreferences = remember(context) {
         context.getSharedPreferences(
             "recall_onboarding",
@@ -1399,7 +1416,6 @@ fun RecallHomeScreen(initialTab: String = "Home") {
         )
     }
 
-    // Holds the category image selected by the user.
     var selectedGalleryFile by remember {
         mutableStateOf<File?>(null)
     }
@@ -1652,7 +1668,6 @@ fun RecallHomeScreen(initialTab: String = "Home") {
 
         bottomBar = {
 
-            // Hide navigation while the first-launch instructions are shown.
             if (!showOnboarding) {
 
                 NavigationBar(
@@ -1673,15 +1688,8 @@ fun RecallHomeScreen(initialTab: String = "Home") {
                                 selectedTab = tab
                             },
                             icon = {
-                                when (tab) {
-                                    "Saved", "Library", "Timeline", "Home" -> {
-                                        RecallNavigationIcon(tab)
-                                    }
-
-                                    else -> {
-                                        Text("⚙", fontSize = 20.sp)
-                                    }
-                                }
+                                // All five tabs now use custom outline icons.
+                                RecallNavigationIcon(tab)
                             },
                             label = {
                                 Text(tab)
@@ -1870,17 +1878,7 @@ fun RecallHomeScreen(initialTab: String = "Home") {
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        OutlinedButton(
-                            onClick = {
-                                showQuickCapture = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Text("+ Quick Capture", color = Purple)
-                        }
+                        // Quick Capture button removed.
 
                         Spacer(modifier = Modifier.height(24.dp))
 
@@ -1988,6 +1986,7 @@ fun RecallHomeScreen(initialTab: String = "Home") {
         )
     }
 
+    // Triple-tap still opens the Quick Capture popup.
     if (showQuickCapture) {
 
         QuickCaptureDialog(
@@ -2151,10 +2150,21 @@ private fun RecallOnboardingScreen(
     }
 }
 
+
 @Composable
 private fun RecallNavigationIcon(tab: String) {
 
     val iconColor = androidx.compose.material3.LocalContentColor.current
+
+    if (tab == "Settings") {
+        Icon(
+            imageVector = Icons.Outlined.Settings,
+            contentDescription = "Settings",
+            tint = iconColor,
+            modifier = Modifier.size(24.dp)
+        )
+        return
+    }
 
     Canvas(
         modifier = Modifier.size(24.dp)
@@ -2186,26 +2196,18 @@ private fun RecallNavigationIcon(tab: String) {
                     moveTo(10f * scale, 20f * scale)
                     lineTo(10f * scale, 14f * scale)
                     quadraticTo(
-                        10f * scale,
-                        13f * scale,
-                        11f * scale,
-                        13f * scale
+                        10f * scale, 13f * scale,
+                        11f * scale, 13f * scale
                     )
                     lineTo(13f * scale, 13f * scale)
                     quadraticTo(
-                        14f * scale,
-                        13f * scale,
-                        14f * scale,
-                        14f * scale
+                        14f * scale, 13f * scale,
+                        14f * scale, 14f * scale
                     )
                     lineTo(14f * scale, 20f * scale)
                 }
 
-                drawPath(
-                    path = path,
-                    color = iconColor,
-                    style = outline
-                )
+                drawPath(path, iconColor, style = outline)
             }
 
             "Saved" -> {
@@ -2214,29 +2216,21 @@ private fun RecallNavigationIcon(tab: String) {
                     moveTo(7f * scale, 3f * scale)
                     lineTo(17f * scale, 3f * scale)
                     quadraticTo(
-                        19f * scale,
-                        3f * scale,
-                        19f * scale,
-                        5f * scale
+                        19f * scale, 3f * scale,
+                        19f * scale, 5f * scale
                     )
                     lineTo(19f * scale, 21f * scale)
                     lineTo(12f * scale, 16f * scale)
                     lineTo(5f * scale, 21f * scale)
                     lineTo(5f * scale, 5f * scale)
                     quadraticTo(
-                        5f * scale,
-                        3f * scale,
-                        7f * scale,
-                        3f * scale
+                        5f * scale, 3f * scale,
+                        7f * scale, 3f * scale
                     )
                     close()
                 }
 
-                drawPath(
-                    path = path,
-                    color = iconColor,
-                    style = outline
-                )
+                drawPath(path, iconColor, style = outline)
             }
 
             "Library" -> {
@@ -2245,41 +2239,29 @@ private fun RecallNavigationIcon(tab: String) {
                     moveTo(3f * scale, 7f * scale)
                     lineTo(9f * scale, 7f * scale)
                     quadraticTo(
-                        10f * scale,
-                        7f * scale,
-                        11f * scale,
-                        8f * scale
+                        10f * scale, 7f * scale,
+                        11f * scale, 8f * scale
                     )
                     lineTo(12f * scale, 9f * scale)
                     lineTo(19f * scale, 9f * scale)
                     quadraticTo(
-                        21f * scale,
-                        9f * scale,
-                        21f * scale,
-                        11f * scale
+                        21f * scale, 9f * scale,
+                        21f * scale, 11f * scale
                     )
                     lineTo(21f * scale, 18f * scale)
                     quadraticTo(
-                        21f * scale,
-                        21f * scale,
-                        18f * scale,
-                        21f * scale
+                        21f * scale, 21f * scale,
+                        18f * scale, 21f * scale
                     )
                     lineTo(6f * scale, 21f * scale)
                     quadraticTo(
-                        3f * scale,
-                        21f * scale,
-                        3f * scale,
-                        18f * scale
+                        3f * scale, 21f * scale,
+                        3f * scale, 18f * scale
                     )
                     close()
                 }
 
-                drawPath(
-                    path = path,
-                    color = iconColor,
-                    style = outline
-                )
+                drawPath(path, iconColor, style = outline)
             }
 
             "Timeline" -> {
@@ -2287,37 +2269,22 @@ private fun RecallNavigationIcon(tab: String) {
                 drawCircle(
                     color = iconColor,
                     radius = 9f * scale,
-                    center = Offset(
-                        12f * scale,
-                        12f * scale
-                    ),
+                    center = Offset(12f * scale, 12f * scale),
                     style = outline
                 )
 
                 drawLine(
                     color = iconColor,
-                    start = Offset(
-                        12f * scale,
-                        7f * scale
-                    ),
-                    end = Offset(
-                        12f * scale,
-                        12f * scale
-                    ),
+                    start = Offset(12f * scale, 7f * scale),
+                    end = Offset(12f * scale, 12f * scale),
                     strokeWidth = strokeWidth,
                     cap = StrokeCap.Round
                 )
 
                 drawLine(
                     color = iconColor,
-                    start = Offset(
-                        12f * scale,
-                        12f * scale
-                    ),
-                    end = Offset(
-                        16f * scale,
-                        14.5f * scale
-                    ),
+                    start = Offset(12f * scale, 12f * scale),
+                    end = Offset(16f * scale, 14.5f * scale),
                     strokeWidth = strokeWidth,
                     cap = StrokeCap.Round
                 )
@@ -2335,34 +2302,69 @@ private fun HomeCategoryGallery(
 
     val context = LocalContext.current
 
-    val normalizedCategory = when (category) {
-        "Products", "Clothing & Accessories" -> "Shopping"
-        "Design & Inspiration" -> "Designs"
-        else -> category
+    // Support older category names while keeping current
+    // saved category names unchanged.
+    val matchingCategories = when (category) {
+
+        "Products" -> setOf(
+            "Products",
+            "Shopping"
+        )
+
+        "Clothing & Accessories" -> setOf(
+            "Clothing & Accessories",
+            "Shopping"
+        )
+
+        "Design & Inspiration" -> setOf(
+            "Design & Inspiration",
+            "Designs"
+        )
+
+        else -> setOf(category)
     }
 
     val captures = remember(category) {
-        val folder = File(context.filesDir, "recall_captures")
-        val prefs = context.getSharedPreferences(
+
+        val preferences = context.getSharedPreferences(
             "recall_library",
             Context.MODE_PRIVATE
         )
 
-        folder.listFiles()
-            ?.filter { file ->
+        // Both folders are part of the Recall Library.
+        val libraryFolders = listOf(
+            File(context.filesDir, "recall_captures"),
+            File(context.filesDir, "recall_library_only")
+        )
+
+        val supportedExtensions = setOf(
+            "png",
+            "jpg",
+            "jpeg",
+            "webp",
+            "gif",
+            "bmp",
+            "heic",
+            "heif"
+        )
+
+        libraryFolders
+            .flatMap { folder ->
+                folder.listFiles()?.toList() ?: emptyList()
+            }
+            .filter { file ->
+
                 file.isFile &&
-                        file.extension.equals("png", true) &&
+                        file.extension.lowercase() in supportedExtensions &&
                         (
-                                prefs.getString(
+                                preferences.getString(
                                     "${file.name}_category",
                                     "Other"
                                 ) ?: "Other"
-                                ).equals(normalizedCategory, true)
+                                ) in matchingCategories
             }
-            ?.sortedByDescending {
-                it.lastModified()
-            }
-            ?: emptyList()
+            .distinctBy { it.absolutePath }
+            .sortedByDescending { it.lastModified() }
     }
 
     Card(
@@ -2374,7 +2376,7 @@ private fun HomeCategoryGallery(
     ) {
 
         Column(
-            Modifier.padding(14.dp)
+            modifier = Modifier.padding(14.dp)
         ) {
 
             Text(
@@ -2383,19 +2385,20 @@ private fun HomeCategoryGallery(
                 fontWeight = FontWeight.Bold
             )
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             if (captures.isEmpty()) {
 
                 Text(
-                    "No saved images in this category yet.",
+                    "No images in this category yet.",
                     color = SecondaryText,
                     fontSize = 13.sp
                 )
 
             } else {
 
-                captures.take(6).chunked(2).forEach { row ->
+                // Display ALL matching images, not just the first six.
+                captures.chunked(2).forEach { row ->
 
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2436,7 +2439,7 @@ private fun HomeCategoryGallery(
                             }
 
                             Column(
-                                Modifier
+                                modifier = Modifier
                                     .weight(1f)
                                     .clickable {
                                         onOpenCapture(file)
@@ -2453,6 +2456,22 @@ private fun HomeCategoryGallery(
                                             .height(105.dp),
                                         contentScale = ContentScale.Crop
                                     )
+
+                                } else {
+
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(105.dp)
+                                            .background(CardColor),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "Preview unavailable",
+                                            color = SecondaryText,
+                                            fontSize = 11.sp
+                                        )
+                                    }
                                 }
 
                                 Text(
@@ -2475,7 +2494,7 @@ private fun HomeCategoryGallery(
                         }
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
 
                 TextButton(
@@ -2519,9 +2538,13 @@ fun CategoryCard(
 
             Text(
                 text = category,
+                modifier = Modifier.fillMaxWidth(),
                 color = Color.White,
                 fontWeight = FontWeight.Medium,
-                fontSize = 14.sp
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center,
+                lineHeight = 18.sp,
+                maxLines = 2
             )
         }
     }

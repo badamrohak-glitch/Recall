@@ -1,4 +1,3 @@
-
 package com.recall.app
 
 import android.content.Context
@@ -15,57 +14,49 @@ object RecallBackupScheduler {
 
     fun schedule(context: Context) {
 
-        val appContext = context.applicationContext
+        val autoBackupEnabled =
+            RecallBackupPreferences.isAutoBackupEnabled(context)
 
-        // Stop scheduling if automatic backup is disabled.
-        if (!RecallBackupPreferences.isAutoBackupEnabled(appContext)) {
-            cancel(appContext)
+        val hasDestination =
+            RecallBackupPreferences.hasAnyBackupDestinationEnabled(context)
+
+        if (!autoBackupEnabled || !hasDestination) {
+            cancel(context)
             return
         }
 
-        // Automatic uploads currently support Google Drive only.
-        if (RecallBackupPreferences.getDestination(appContext) !=
-            RecallBackupPreferences.DRIVE
-        ) {
-            cancel(appContext)
-            return
-        }
+        val frequency =
+            RecallBackupPreferences.getFrequency(context)
 
-        // Read the selected backup frequency.
-        val interval = when (
-            RecallBackupPreferences.getFrequency(appContext)
-        ) {
+        val intervalDays = when (frequency) {
             RecallBackupPreferences.DAILY -> 1L
             RecallBackupPreferences.WEEKLY -> 7L
             RecallBackupPreferences.MONTHLY -> 30L
-            else -> 7L
+            else -> 1L
         }
 
-        // Run only when an internet connection is available.
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
         val backupRequest =
             PeriodicWorkRequestBuilder<RecallAutoBackupWorker>(
-                interval,
+                intervalDays,
                 TimeUnit.DAYS
             )
                 .setConstraints(constraints)
                 .build()
 
-        // Update the existing schedule instead of creating duplicates.
-        WorkManager.getInstance(appContext)
-            .enqueueUniquePeriodicWork(
-                WORK_NAME,
-                ExistingPeriodicWorkPolicy.UPDATE,
-                backupRequest
-            )
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            WORK_NAME,
+            ExistingPeriodicWorkPolicy.UPDATE,
+            backupRequest
+        )
     }
 
     fun cancel(context: Context) {
 
-        WorkManager.getInstance(context.applicationContext)
+        WorkManager.getInstance(context)
             .cancelUniqueWork(WORK_NAME)
     }
 }
